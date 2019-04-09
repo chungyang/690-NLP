@@ -22,6 +22,7 @@ def get_vocabs(filename, allvocabs):
 
     return allvocabs
 
+
 if __name__ == "__main__":
 
     english_vocabs = set()
@@ -34,5 +35,4 @@ if __name__ == "__main__":
 
     print(len(english_vocabs), "unique english vocabs")
     print(len(german_vocabs), "unique english vocabs")
-
 
