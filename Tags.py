@@ -1,7 +1,7 @@
-BOS = "<BOS>"
-EOS = "<EOS>"
-UNK = "<UNK>"
-PAD = "<BLANK>"
+BOS = "<bos>"
+EOS = "<eos>"
+UNK = "<unk>"
+PAD = "<blank>"
 
 BOS_ID = 0
 EOS_ID = 1

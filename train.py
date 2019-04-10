@@ -1,5 +1,4 @@
-import argparse
-import torch
+import argparse, torch
 
 def main():
 
