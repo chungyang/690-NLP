@@ -35,6 +35,11 @@ def main():
     # Set device type
     device = torch.device("cuda" if options.cuda else "cpu")
 
+    # Load preprocessed data
+    data = torch.load(options.data)
+
+    print("hey")
+
 
 if __name__ == "__main__":
     main()
