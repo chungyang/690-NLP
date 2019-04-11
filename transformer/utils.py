@@ -9,7 +9,7 @@ def get_non_pad_mask(seq):
 def get_sine_pos_encoding(n_position, d_hid, padding_idx=None):
 
     def cal_angle(position, hid_idx):
-        return position / np.power(10000, (2 * hid_idx) / d_hid)
+        return position / np.power(10000, 2 * (hid_idx // 2) / d_hid)
 
     def get_posi_angle_vec(position):
         return [cal_angle(position, hid_j) for hid_j in range(d_hid)]

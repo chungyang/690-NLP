@@ -193,7 +193,7 @@ def main():
     parser.add_argument('-batch_size', type=int, default=64)
 
     parser.add_argument('-d_word_vec', type=int, default=300)
-    parser.add_argument('-d_model', type=int, default=512)
+    parser.add_argument('-d_model', type=int, default=300)
     parser.add_argument('-d_inner_hid', type=int, default=2048)
     parser.add_argument('-d_k', type=int, default=64)
     parser.add_argument('-d_v', type=int, default=64)
@@ -219,8 +219,6 @@ def main():
     # Load preprocessed data
     data = torch.load(options.data)
     training_data, dev_data = prepare_dataloaders(data, options)
-    src_embedding = data["glove"]["src"]
-    tgt_embedding = data["glove"]["src"]
 
 
     transformer = t.Transformer(
