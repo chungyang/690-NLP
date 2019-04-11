@@ -40,8 +40,10 @@ def main():
 
     # Load preprocessed data
     data = torch.load(options.data)
-
     training_data, dev_data = prepare_dataloaders(data, options)
+    src_embedding = data["glove"]["src"]
+    tgt_embedding = data["glove"]["src"]
+
 
     transformer = t.Transformer(
         src_embedding = data["glove"]["src"],
