@@ -25,7 +25,7 @@ class Encoder(nn.Module):
         self.src_word_emb = nn.Embedding.from_pretrained(src_embedding, freeze = True)
 
         self.position_enc = nn.Embedding.from_pretrained(
-            get_sine_pos_encoding(len_max_seq, d_word_vec, padding_idx=0),freeze=True)
+            get_sine_pos_encoding(len_max_seq + 1, d_word_vec, padding_idx=0),freeze=True)
 
         self.layer_stack = nn.ModuleList([
             EncoderLayer(d_model, d_inner, n_head, d_k, d_v, dropout=dropout)
