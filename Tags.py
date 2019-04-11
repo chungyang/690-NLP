@@ -3,7 +3,7 @@ EOS = "<eos>"
 UNK = "<unk>"
 PAD = "<blank>"
 
-BOS_ID = 0
-EOS_ID = 1
-UNK_ID = 2
-PAD_ID = 3
+PAD_ID = 0
+BOS_ID = 1
+EOS_ID = 2
+UNK_ID = 3

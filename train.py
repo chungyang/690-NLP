@@ -1,4 +1,4 @@
-import argparse, torch
+import argparse, torch, TranslationDataset, Tags, numpy as np
 
 def main():
 
@@ -37,8 +37,59 @@ def main():
     # Load preprocessed data
     data = torch.load(options.data)
 
-    print("hey")
 
+def paired_collate_fn(sentences):
+    src_sentences, tgt_sentences = list(zip(*sentences))
+    src_sentences, src_pos = collate_fn(src_sentences)
+    tgt_sentences, tgt_pos = collate_fn(tgt_sentences)
+    return (src_sentences, src_pos, tgt_sentences, tgt_pos)
+
+def collate_fn(sentences):
+    """
+    Pad all sentences to the max sentence length within a batch and position each word
+    with corresponding indices. All pad tokens have position of 0
+
+    :param sentences: lists of word indices
+    :return: batch of sentences and batch of
+    """
+    max_len = max(len(sentence) for sentence in sentences)
+
+    batch_sentences = np.array([
+        sentence + [Tags.PAD] * (max_len - len(sentence))
+        for sentence in sentences])
+
+    batch_pos = np.array([
+        [pos_i+1 if w_i != Tags.PAD else 0
+         for pos_i, w_i in enumerate(sentence)] for sentence in batch_sentences])
+
+    batch_sentences = torch.LongTensor(batch_sentences)
+    batch_pos = torch.LongTensor(batch_pos)
+
+    return batch_sentences, batch_pos
+
+def prepare_dataloaders(data, opt):
+    # ========= Preparing DataLoader =========#
+    train_loader = torch.utils.data.DataLoader(
+        TranslationDataset(
+            src_word2idx=data['dict']['src'],
+            tgt_word2idx=data['dict']['tgt'],
+            src_insts=data['train']['src'],
+            tgt_insts=data['train']['tgt']),
+        num_workers=2,
+        batch_size=opt.batch_size,
+        collate_fn=paired_collate_fn,
+        shuffle=True)
+
+    valid_loader = torch.utils.data.DataLoader(
+        TranslationDataset(
+            src_word2idx=data['dict']['src'],
+            tgt_word2idx=data['dict']['tgt'],
+            src_insts=data['valid']['src'],
+            tgt_insts=data['valid']['tgt']),
+        num_workers=2,
+        batch_size=opt.batch_size,
+        collate_fn=paired_collate_fn)
+    return train_loader, valid_loader
 
 if __name__ == "__main__":
     main()
