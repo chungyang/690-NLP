@@ -12,7 +12,7 @@ class Decoder(nn.Module):
 
         super().__init__()
 
-        self.tgt_word_emb = nn.Embedding.from_pretrained(tgt_embedding, d_word_vec, padding_idx = Tags.PAD_ID, freeze = True)
+        self.tgt_word_emb = nn.Embedding.from_pretrained(tgt_embedding, freeze = True)
 
         self.position_enc = nn.Embedding.from_pretrained(
             get_sine_pos_encoding(len_max_seq, d_word_vec, padding_idx=0),

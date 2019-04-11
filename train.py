@@ -1,4 +1,7 @@
-import argparse, torch, TranslationDataset, Tags, numpy as np
+import argparse, torch, Tags, numpy as np
+from transformer import Transformer as t
+import TranslationDataset as td
+
 
 def main():
 
@@ -9,6 +12,7 @@ def main():
     parser.add_argument('-epoch', type=int, default=10)
     parser.add_argument('-batch_size', type=int, default=64)
 
+    parser.add_argument('-d_word_vec', type=int, default=512)
     parser.add_argument('-d_model', type=int, default=512)
     parser.add_argument('-d_inner_hid', type=int, default=2048)
     parser.add_argument('-d_k', type=int, default=64)
@@ -36,6 +40,23 @@ def main():
 
     # Load preprocessed data
     data = torch.load(options.data)
+
+    training_data, dev_data = prepare_dataloaders(data, options)
+
+    transformer = t.Transformer(
+        src_embedding = data["glove"]["src"],
+        tgt_embedding = data["glove"]["tgt"],
+        len_max_seq = data["options"].max_len,
+        d_k=options.d_k,
+        d_v=options.d_v,
+        d_model=options.d_model,
+        d_word_vec=options.d_word_vec,
+        d_inner=options.d_inner_hid,
+        n_layers=options.n_layers,
+        n_head=options.n_head,
+        dropout=options.dropout).to(device)
+
+    print("hey")
 
 
 def paired_collate_fn(sentences):
@@ -70,22 +91,18 @@ def collate_fn(sentences):
 def prepare_dataloaders(data, opt):
     # ========= Preparing DataLoader =========#
     train_loader = torch.utils.data.DataLoader(
-        TranslationDataset(
-            src_word2idx=data['dict']['src'],
-            tgt_word2idx=data['dict']['tgt'],
-            src_insts=data['train']['src'],
-            tgt_insts=data['train']['tgt']),
+        td.TranslationDataset(
+            src_sentences=data['train']['src'],
+            tgt_sentences=data['train']['tgt']),
         num_workers=2,
         batch_size=opt.batch_size,
         collate_fn=paired_collate_fn,
         shuffle=True)
 
     valid_loader = torch.utils.data.DataLoader(
-        TranslationDataset(
-            src_word2idx=data['dict']['src'],
-            tgt_word2idx=data['dict']['tgt'],
-            src_insts=data['valid']['src'],
-            tgt_insts=data['valid']['tgt']),
+        td.TranslationDataset(
+            src_sentences=data['dev']['src'],
+            tgt_sentences=data['dev']['tgt']),
         num_workers=2,
         batch_size=opt.batch_size,
         collate_fn=paired_collate_fn)

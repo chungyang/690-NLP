@@ -1,7 +1,5 @@
 
 from torch.utils.data import Dataset
-import torch, Tags, numpy as np
-
 
 class TranslationDataset(Dataset):
 
