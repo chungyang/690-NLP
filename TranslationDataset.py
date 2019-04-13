@@ -3,12 +3,15 @@ from torch.utils.data import Dataset
 
 class TranslationDataset(Dataset):
 
-    def __init__(self, src_sentences, tgt_sentences):
-        self.src_sentences = src_sentences
-        self.tgt_sentences = tgt_sentences
+    def __init__(self, src_sentences, tgt_sentences = None):
+        self._src_sentences = src_sentences
+        self._tgt_sentences = tgt_sentences
 
     def __getitem__(self, idx):
-        return self.src_sentences[idx], self.tgt_sentences[idx]
+        if self._tgt_sentences:
+            return self._src_sentences[idx], self._tgt_sentences[idx]
+
+        return self._src_sentences[idx]
 
     def __len__(self):
         return len(self.src_sentences)

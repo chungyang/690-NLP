@@ -45,3 +45,95 @@ def get_subsequent_mask(seq):
 
     return subsequent_mask
 
+
+def paired_collate_fn(sentences):
+    src_sentences, tgt_sentences = list(zip(*sentences))
+    src_sentences, src_pos = collate_fn(src_sentences)
+    tgt_sentences, tgt_pos = collate_fn(tgt_sentences)
+    return (src_sentences, src_pos, tgt_sentences, tgt_pos)
+
+def collate_fn(sentences):
+    """
+    Pad all sentences to the max sentence length within a batch and position each word
+    with corresponding indices. All pad tokens have position of 0
+
+    :param sentences: lists of word indices
+    :return: batch of sentences and batch of
+    """
+    max_len = max(len(sentence) for sentence in sentences)
+
+    batch_sentences = np.array([
+        sentence + [Tags.PAD_ID] * (max_len - len(sentence))
+        for sentence in sentences])
+
+    batch_pos = np.array([
+        [pos_i+1 if w_i != Tags.PAD_ID else 0
+         for pos_i, w_i in enumerate(sentence)] for sentence in batch_sentences])
+
+    batch_sentences = torch.LongTensor(batch_sentences)
+    batch_pos = torch.LongTensor(batch_pos)
+
+    return batch_sentences, batch_pos
+
+def greedy_decode(pred, idx2word, batch_size, max_seq_length):
+    """
+    :param pred: prediction probabilities
+    :param idx2word: dictionary to map indices to words
+    :param batch_size: size of the batch
+    :param seq_length: max seqenece length
+
+    :return: predicted words
+    """
+    predicted_sentences = []
+    indices = torch.argmax(pred, dim = 1)
+    indices = indices.view(batch_size, max_seq_length).tolist()
+
+    for i in range(batch_size):
+        sentence = []
+        for j in range(max_seq_length):
+            pred_w = idx2word[indices[i][j]]
+
+            if pred_w == Tags.EOS or pred_w == Tags.PAD:
+                break
+
+            sentence.append(pred_w)
+
+        predicted_sentences.append(sentence)
+
+    return predicted_sentences
+
+
+def cal_performance(pred, gold, smoothing=False):
+    ''' Apply label smoothing if needed '''
+
+    loss = cal_loss(pred, gold, smoothing)
+
+    pred = pred.max(1)[1]
+    gold = gold.contiguous().view(-1)
+    non_pad_mask = gold.ne(Tags.PAD_ID)
+    n_correct = pred.eq(gold)
+    n_correct = n_correct.masked_select(non_pad_mask).sum().item()
+
+    return loss, n_correct
+
+
+def cal_loss(pred, gold, smoothing):
+    ''' Calculate cross entropy loss, apply label smoothing if needed. '''
+
+    gold = gold.contiguous().view(-1)
+
+    if smoothing:
+        eps = 0.1
+        n_class = pred.size(1)
+
+        one_hot = torch.zeros_like(pred).scatter(1, gold.view(-1, 1), 1)
+        one_hot = one_hot * (1 - eps) + (1 - one_hot) * eps / (n_class - 1)
+        log_prb = F.log_softmax(pred, dim=1)
+
+        non_pad_mask = gold.ne(Tags.PAD_ID)
+        loss = -(one_hot * log_prb).sum(dim=1)
+        loss = loss.masked_select(non_pad_mask).sum()  # average later
+    else:
+        loss = F.cross_entropy(pred, gold, ignore_index=Tags.PAD_ID, reduction='sum')
+
+    return loss
