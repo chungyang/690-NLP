@@ -45,8 +45,36 @@ def cal_loss(pred, gold, smoothing):
 
     return loss
 
+def greedy_decode(pred, idx2word, batch_size, max_seq_length):
+    """
+    :param pred: prediction probabilities
+    :param idx2word: dictionary to map indices to words
+    :param batch_size: size of the batch
+    :param seq_length: max seqenece length
 
-def train_epoch(model, training_data, optimizer, device, smoothing):
+    :return: predicted words
+    """
+    predicted_sentences = []
+    indices = torch.argmax(pred, dim = 1)
+    indices = indices.view(batch_size, max_seq_length).tolist()
+
+    for i in range(batch_size):
+        sentence = []
+        for j in range(max_seq_length):
+            pred_w = idx2word[indices[i][j]]
+
+            if pred_w == Tags.EOS or pred_w == Tags.PAD:
+                break
+
+            sentence.append(pred_w)
+
+        predicted_sentences.append(sentence)
+
+    return predicted_sentences
+
+
+
+def train_epoch(model, training_data, optimizer, device, idx2word, smoothing):
     ''' Epoch operation in training phase'''
 
     model.train()
@@ -67,6 +95,7 @@ def train_epoch(model, training_data, optimizer, device, smoothing):
         optimizer.zero_grad()
         pred = model(src_seq, src_pos, tgt_seq, tgt_pos)
 
+
         # backward
         loss, n_correct = cal_performance(pred, gold, smoothing=smoothing)
         loss.backward()
@@ -86,7 +115,7 @@ def train_epoch(model, training_data, optimizer, device, smoothing):
     accuracy = n_word_correct/n_word_total
     return loss_per_word, accuracy
 
-def eval_epoch(model, validation_data, device):
+def eval_epoch(model, validation_data, device, idx2word):
     ''' Epoch operation in evaluation phase '''
 
     model.eval()
@@ -103,10 +132,15 @@ def eval_epoch(model, validation_data, device):
             # prepare data
             src_seq, src_pos, tgt_seq, tgt_pos = map(lambda x: x.to(device), batch)
             gold = tgt_seq[:, 1:]
+            batch_size, seq_length = gold.size()
 
             # forward
             pred = model(src_seq, src_pos, tgt_seq, tgt_pos)
+
             loss, n_correct = cal_performance(pred, gold, smoothing=False)
+            log_prb = F.softmax(pred, dim=1)
+            pred_sentences = greedy_decode(log_prb, idx2word, batch_size, seq_length)
+
 
             # note keeping
             total_loss += loss.item()
@@ -120,7 +154,7 @@ def eval_epoch(model, validation_data, device):
     accuracy = n_word_correct/n_word_total
     return loss_per_word, accuracy
 
-def train(model, training_data, validation_data, optimizer, device, opt):
+def train(model, training_data, validation_data, optimizer, device, opt, idx2word):
     ''' Start training '''
 
     log_train_file = None
@@ -143,14 +177,14 @@ def train(model, training_data, validation_data, optimizer, device, opt):
 
         start = time.time()
         train_loss, train_accu = train_epoch(
-            model, training_data, optimizer, device, smoothing=opt.label_smoothing)
+            model, training_data, optimizer, device, idx2word, smoothing=opt.label_smoothing)
         print('  - (Training)   ppl: {ppl: 8.5f}, accuracy: {accu:3.3f} %, '\
               'elapse: {elapse:3.3f} min'.format(
                   ppl=math.exp(min(train_loss, 100)), accu=100*train_accu,
                   elapse=(time.time()-start)/60))
 
         start = time.time()
-        valid_loss, valid_accu = eval_epoch(model, validation_data, device)
+        valid_loss, valid_accu = eval_epoch(model, validation_data, device, idx2word)
         print('  - (Validation) ppl: {ppl: 8.5f}, accuracy: {accu:3.3f} %, '\
                 'elapse: {elapse:3.3f} min'.format(
                     ppl=math.exp(min(valid_loss, 100)), accu=100*valid_accu,
@@ -169,7 +203,7 @@ def train(model, training_data, validation_data, optimizer, device, opt):
                 model_name = opt.save_model + '_accu_{accu:3.3f}.chkpt'.format(accu=100*valid_accu)
                 torch.save(checkpoint, model_name)
             elif opt.save_mode == 'best':
-                model_name = opt.save_model + '.chkpt'
+                model_name = "model/" + opt.save_model + '.chkpt'
                 if valid_accu >= max(valid_accus):
                     torch.save(checkpoint, model_name)
                     print('    - [Info] The checkpoint file has been updated.')
@@ -182,6 +216,7 @@ def train(model, training_data, validation_data, optimizer, device, opt):
                 log_vf.write('{epoch},{loss: 8.5f},{ppl: 8.5f},{accu:3.3f}\n'.format(
                     epoch=epoch_i, loss=valid_loss,
                     ppl=math.exp(min(valid_loss, 100)), accu=100*valid_accu))
+
 
 def main():
 
@@ -211,6 +246,8 @@ def main():
     parser.add_argument('-cuda', action='store_true')
     parser.add_argument('-label_smoothing', action='store_true')
 
+    parser.add_argument('-save_param', type=str, default="model/transformer_params")
+
     options = parser.parse_args()
 
     # Set device type
@@ -234,13 +271,28 @@ def main():
         n_head=options.n_head,
         dropout=options.dropout).to(device)
 
+    transformer_params = {
+        "src_embedding" : data["glove"]["src"],
+        "tgt_embedding" : data["glove"]["tgt"],
+        "len_max_seq" : data["options"].max_len,
+        "d_k" : options.d_k,
+        "d_v" : options.d_v,
+        "d_model" : options.d_model,
+        "d_word_vec" : options.d_word_vec,
+        "d_inner" : options.d_inner_hid,
+        "n_layers" :options.n_layers,
+        "n_head" : options.n_head,
+        "dropout" : options.dropout}
+
+    torch.save(transformer_params, options.save_param)
+
     optimizer = ScheduledOptim(
         optim.Adam(
             filter(lambda x: x.requires_grad, transformer.parameters()),
             betas=(0.9, 0.98), eps=1e-09),
         options.d_model, options.n_warmup_steps)
 
-    train(transformer, training_data, dev_data, optimizer, device, options)
+    train(transformer, training_data, dev_data, optimizer, device, options, data["idx2word"]["tgt"])
 
 
 
@@ -291,6 +343,7 @@ def prepare_dataloaders(data, opt):
         num_workers=2,
         batch_size=opt.batch_size,
         collate_fn=paired_collate_fn)
+
     return train_loader, valid_loader
 
 if __name__ == "__main__":

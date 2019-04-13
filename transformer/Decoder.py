@@ -37,7 +37,7 @@ class Decoder(nn.Module):
         dec_output = self.tgt_word_emb(tgt_seq) + self.position_enc(tgt_pos)
 
         for dec_layer in self.layer_stack:
-            dec_output, dec_slf_attn, dec_enc_attn = dec_layer(
+            dec_output = dec_layer(
                 dec_output, enc_output,
                 non_pad_mask=non_pad_mask,
                 slf_attn_mask=slf_attn_mask,
