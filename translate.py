@@ -1,74 +1,96 @@
-import torch
 import argparse
-import transformer.Transformer as t
-import TranslationDataset as td
-from transformer.utils import *
-from tqdm import tqdm
+import time
+import torch
+from Models import get_model
+from Process import *
+import torch.nn.functional as F
+from Optim import CosineWithRestarts
+from Batch import create_masks
+import pdb
+import dill as pickle
+import argparse
+from Models import get_model
+from Beam import beam_search
+from nltk.corpus import wordnet
+from torch.autograd import Variable
+import re
 
+def get_synonym(word, SRC):
+    syns = wordnet.synsets(word)
+    for s in syns:
+        for l in s.lemmas():
+            if SRC.vocab.stoi[l.name()] != 0:
+                return SRC.vocab.stoi[l.name()]
+            
+    return 0
 
+def multiple_replace(dict, text):
+  # Create a regular expression  from the dictionary keys
+  regex = re.compile("(%s)" % "|".join(map(re.escape, dict.keys())))
 
+  # For each match, look-up corresponding value in dictionary
+  return regex.sub(lambda mo: dict[mo.string[mo.start():mo.end()]], text) 
 
-def translate(model_path, de_sentences, params, device):
-    """
-    Translate german to english
-
-    :param model_path: saved model path
-    :param de_sentences: input german sentences
-    :param params: transformer params
-    :param device: pytorch device
-    :return:
-    """
-
-    # Reconstruct the transformer
-    model = t.Transformer(src_embedding = params["src_embedding"],
-        tgt_embedding = params["tgt_embedding"],
-        len_max_seq = params["len_max_seq"],
-        d_k = params["d_k"],
-        d_v = params["d_v"],
-        d_model = params["d_model"],
-        d_word_vec = params["d_word_vec"],
-        d_inner = params["d_inner"],
-        n_layers = params["n_layers"],
-        n_head = params["n_head"],
-        dropout = params["dropout"]).to(device)
-
-    # Restore pretrain model state
-    model.load_state_dict(torch.load(model_path))
+def translate_sentence(sentence, model, opt, SRC, TRG):
+    
     model.eval()
+    indexed = []
+    sentence = SRC.preprocess(sentence)
+    for tok in sentence:
+        if SRC.vocab.stoi[tok] != 0 or opt.floyd == True:
+            indexed.append(SRC.vocab.stoi[tok])
+        else:
+            indexed.append(get_synonym(tok, SRC))
+    sentence = Variable(torch.LongTensor([indexed]))
+    if opt.device == 0:
+        sentence = sentence.cuda()
+    
+    sentence = beam_search(sentence, model, SRC, TRG, opt)
 
-    # Load data
-    test_data = torch.utils.data.DataLoader(
-        td.TranslationDataset(
-            src_sentences = de_sentences),
-        num_workers = 2,
-        batch_size = params.batch_size,
-        collate_fn = paired_collate_fn)
+    return  multiple_replace({' ?' : '?',' !':'!',' .':'.','\' ':'\'',' ,':','}, sentence)
 
-    with torch.no_grad():
-        for batch in tqdm(
-                test_data, mininterval = 2,
-                desc='  - (Translating) ', leave=False):
+def translate(sentences, opt, model, SRC, TRG):
+#     sentences = opt.text.lower().split('.')
+    translated = []
 
-            src_seq, src_pos = map(lambda x: x.to(device), batch)
+    for sentence in sentences:
+        translated.append(translate_sentence(sentence, model, opt, SRC, TRG).capitalize())
 
+    with open('pred.txt', 'w') as f:
+        for item in translated:
+            f.write("%s\n" % item)
 
+    return (' '.join(translated))
 
 
-
-
-
-if __name__ == "__main__":
+def main():
+    
     parser = argparse.ArgumentParser()
+    parser.add_argument('-load_weights', required=True)
+    parser.add_argument('-k', type=int, default=3)
+    parser.add_argument('-max_len', type=int, default=200)
+    parser.add_argument('-d_model', type=int, default=512)
+    parser.add_argument('-n_layers', type=int, default=6)
+    parser.add_argument('-src_lang', required=True)
+    parser.add_argument('-trg_lang', required=True)
+    parser.add_argument('-heads', type=int, default=8)
+    parser.add_argument('-dropout', type=int, default=0.1)
+    parser.add_argument('-no_cuda', action='store_true')
+    parser.add_argument('-floyd', action='store_true')
+    
+    opt = parser.parse_args()
 
-    parser.add_argument('-data', required=True)
-    parser.add_argument('-params', type=str, defualt="model/transformer_params")
-    parser.add_argument('-model_path', type=str, required=True)
-    parser.add_argument('-cuda', action='store_true')
+    opt.device = 0 if opt.no_cuda is False else -1
+ 
+    assert opt.k > 0
+    assert opt.max_len > 10
 
-    options = parser.parse_args()
+    SRC, TRG = create_fields(opt)
+    model = get_model(opt, len(SRC.vocab), len(TRG.vocab))
+    sentences = open('data/dev.de', encoding='utf-8').read().split('\n')
+    
+    phrase = translate(sentences, opt, model, SRC, TRG)
+    print('> ' + phrase + '\n')
 
-    device = torch.device("cuda" if options.cuda else "cpu")
-    params = torch.load(options.params)
-    data = torch.load(options.data)
-
-    translate(options.model_path, data, params, device )
+if __name__ == '__main__':
+    main()

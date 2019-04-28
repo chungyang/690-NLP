@@ -1,257 +1,183 @@
-import argparse, torch, Tags, numpy as np
-from transformer import Transformer as t
-import TranslationDataset as td
+import argparse
+import time
+import torch
+from Models import get_model
+from Process import *
 import torch.nn.functional as F
-import math, time
-from tqdm import tqdm
-from transformer.Optimizer import ScheduledOptim
-import torch.optim as optim
-from transformer.utils import *
+from Optim import CosineWithRestarts
+from Batch import create_masks
+import dill as pickle
 
-
-def train_epoch(model, training_data, optimizer, device, idx2word, smoothing):
-    ''' Epoch operation in training phase'''
-
+def train_model(model, opt):
+    
+    print("training model...")
     model.train()
+    start = time.time()
+    if opt.checkpoint > 0:
+        cptime = time.time()
+                 
+    for epoch in range(opt.epochs):
 
-    total_loss = 0
-    n_word_total = 0
-    n_word_correct = 0
+        total_loss = 0
+        if opt.floyd is False:
+            print("   %dm: epoch %d [%s]  %d%%  loss = %s" %\
+            ((time.time() - start)//60, epoch + 1, "".join(' '*20), 0, '...'), end='\r')
+        
+        if opt.checkpoint > 0:
+            torch.save(model.state_dict(), 'weights/model_weights')
+                    
+        for i, batch in enumerate(opt.train): 
 
-    for batch in tqdm(
-            training_data, mininterval=2,
-            desc='  - (Training)   ', leave=False):
-
-        # prepare data
-        src_seq, src_pos, tgt_seq, tgt_pos = map(lambda x: x.to(device), batch)
-        gold = tgt_seq[:, 1:]
-
-        # forward
-        optimizer.zero_grad()
-        pred = model(src_seq, src_pos, tgt_seq, tgt_pos)
-
-
-        # backward
-        loss, n_correct = cal_performance(pred, gold, smoothing=smoothing)
-        loss.backward()
-
-        # update parameters
-        optimizer.step_and_update_lr()
-
-        # note keeping
-        total_loss += loss.item()
-
-        non_pad_mask = gold.ne(Tags.PAD_ID)
-        n_word = non_pad_mask.sum().item()
-        n_word_total += n_word
-        n_word_correct += n_correct
-
-    loss_per_word = total_loss/n_word_total
-    accuracy = n_word_correct/n_word_total
-    return loss_per_word, accuracy
-
-def eval_epoch(model, validation_data, device, idx2word):
-    ''' Epoch operation in evaluation phase '''
-
-    model.eval()
-
-    total_loss = 0
-    n_word_total = 0
-    n_word_correct = 0
-
-    with torch.no_grad():
-        for batch in tqdm(
-                validation_data, mininterval=2,
-                desc='  - (Validation) ', leave=False):
-
-            # prepare data
-            src_seq, src_pos, tgt_seq, tgt_pos = map(lambda x: x.to(device), batch)
-            gold = tgt_seq[:, 1:]
-            batch_size, seq_length = gold.size()
-
-            # forward
-            pred = model(src_seq, src_pos, tgt_seq, tgt_pos)
-
-            loss, n_correct = cal_performance(pred, gold, smoothing=False)
-            prb = F.softmax(pred, dim=1)
-            pred_sentences = greedy_decode(prb, idx2word, batch_size, seq_length)
-
-
-            # note keeping
+            src = batch.src.transpose(0,1)
+            trg = batch.trg.transpose(0,1)
+            trg_input = trg[:, :-1]
+            src_mask, trg_mask = create_masks(src, trg_input, opt)
+            preds = model(src, trg_input, src_mask, trg_mask)
+            ys = trg[:, 1:].contiguous().view(-1)
+            opt.optimizer.zero_grad()
+            loss = F.cross_entropy(preds.view(-1, preds.size(-1)), ys, ignore_index=opt.trg_pad)
+            loss.backward()
+            opt.optimizer.step()
+            if opt.SGDR == True: 
+                opt.sched.step()
+            
             total_loss += loss.item()
-
-            non_pad_mask = gold.ne(Tags.PAD_ID)
-            n_word = non_pad_mask.sum().item()
-            n_word_total += n_word
-            n_word_correct += n_correct
-
-    loss_per_word = total_loss/n_word_total
-    accuracy = n_word_correct/n_word_total
-    return loss_per_word, accuracy
-
-def train(model, training_data, validation_data, optimizer, device, opt, idx2word):
-    ''' Start training '''
-
-    log_train_file = None
-    log_valid_file = None
-
-    if opt.log:
-        log_train_file = opt.log + '.train.log'
-        log_valid_file = opt.log + '.valid.log'
-
-        print('[Info] Training performance will be written to file: {} and {}'.format(
-            log_train_file, log_valid_file))
-
-        with open(log_train_file, 'w') as log_tf, open(log_valid_file, 'w') as log_vf:
-            log_tf.write('epoch,loss,ppl,accuracy\n')
-            log_vf.write('epoch,loss,ppl,accuracy\n')
-
-    valid_accus = []
-    for epoch_i in range(opt.epoch):
-        print('[ Epoch', epoch_i, ']')
-
-        start = time.time()
-        train_loss, train_accu = train_epoch(
-            model, training_data, optimizer, device, idx2word, smoothing=opt.label_smoothing)
-        print('  - (Training)   ppl: {ppl: 8.5f}, accuracy: {accu:3.3f} %, '\
-              'elapse: {elapse:3.3f} min'.format(
-                  ppl=math.exp(min(train_loss, 100)), accu=100*train_accu,
-                  elapse=(time.time()-start)/60))
-
-        start = time.time()
-        valid_loss, valid_accu = eval_epoch(model, validation_data, device, idx2word)
-        print('  - (Validation) ppl: {ppl: 8.5f}, accuracy: {accu:3.3f} %, '\
-                'elapse: {elapse:3.3f} min'.format(
-                    ppl=math.exp(min(valid_loss, 100)), accu=100*valid_accu,
-                    elapse=(time.time()-start)/60))
-
-        valid_accus += [valid_accu]
-
-        model_state_dict = model.state_dict()
-        checkpoint = {
-            'model': model_state_dict,
-            'settings': opt,
-            'epoch': epoch_i}
-
-        if opt.save_model:
-            if opt.save_mode == 'all':
-                model_name = opt.save_model + '_accu_{accu:3.3f}.chkpt'.format(accu=100*valid_accu)
-                torch.save(checkpoint, model_name)
-            elif opt.save_mode == 'best':
-                model_name = "model/" + opt.save_model + '.chkpt'
-                if valid_accu >= max(valid_accus):
-                    torch.save(checkpoint, model_name)
-                    print('    - [Info] The checkpoint file has been updated.')
-
-        if log_train_file and log_valid_file:
-            with open(log_train_file, 'a') as log_tf, open(log_valid_file, 'a') as log_vf:
-                log_tf.write('{epoch},{loss: 8.5f},{ppl: 8.5f},{accu:3.3f}\n'.format(
-                    epoch=epoch_i, loss=train_loss,
-                    ppl=math.exp(min(train_loss, 100)), accu=100*train_accu))
-                log_vf.write('{epoch},{loss: 8.5f},{ppl: 8.5f},{accu:3.3f}\n'.format(
-                    epoch=epoch_i, loss=valid_loss,
-                    ppl=math.exp(min(valid_loss, 100)), accu=100*valid_accu))
-
+            
+            if (i + 1) % opt.printevery == 0:
+                 p = int(100 * (i + 1) / opt.train_len)
+                 avg_loss = total_loss/opt.printevery
+                 if opt.floyd is False:
+                    print("   %dm: epoch %d [%s%s]  %d%%  loss = %.3f" %\
+                    ((time.time() - start)//60, epoch + 1, "".join('#'*(p//5)), "".join(' '*(20-(p//5))), p, avg_loss), end='\r')
+                 else:
+                    print("   %dm: epoch %d [%s%s]  %d%%  loss = %.3f" %\
+                    ((time.time() - start)//60, epoch + 1, "".join('#'*(p//5)), "".join(' '*(20-(p//5))), p, avg_loss))
+                 total_loss = 0
+            
+            if opt.checkpoint > 0 and ((time.time()-cptime)//60) // opt.checkpoint >= 1:
+                torch.save(model.state_dict(), 'weights/model_weights')
+                cptime = time.time()
+   
+   
+        print("%dm: epoch %d [%s%s]  %d%%  loss = %.3f\nepoch %d complete, loss = %.03f" %\
+        ((time.time() - start)//60, epoch + 1, "".join('#'*(100//5)), "".join(' '*(20-(100//5))), 100, avg_loss, epoch + 1, avg_loss))
 
 def main():
 
     parser = argparse.ArgumentParser()
-
-    parser.add_argument('-data', required=True)
-
-    parser.add_argument('-epoch', type=int, default=10)
-    parser.add_argument('-batch_size', type=int, default=64)
-
-    parser.add_argument('-d_word_vec', type=int, default=300)
-    parser.add_argument('-d_model', type=int, default=300)
-    parser.add_argument('-d_inner_hid', type=int, default=2048)
-    parser.add_argument('-d_k', type=int, default=64)
-    parser.add_argument('-d_v', type=int, default=64)
-
-    parser.add_argument('-n_head', type=int, default=8)
+    parser.add_argument('-src_data', required=True)
+    parser.add_argument('-trg_data', required=True)
+    parser.add_argument('-src_lang', required=True)
+    parser.add_argument('-trg_lang', required=True)
+    parser.add_argument('-no_cuda', action='store_true')
+    parser.add_argument('-SGDR', action='store_true')
+    parser.add_argument('-epochs', type=int, default=2)
+    parser.add_argument('-d_model', type=int, default=512)
     parser.add_argument('-n_layers', type=int, default=6)
-    parser.add_argument('-n_warmup_steps', type=int, default=4000)
+    parser.add_argument('-heads', type=int, default=8)
+    parser.add_argument('-dropout', type=int, default=0.1)
+    parser.add_argument('-batchsize', type=int, default=1500)
+    parser.add_argument('-printevery', type=int, default=100)
+    parser.add_argument('-lr', type=int, default=0.0001)
+    parser.add_argument('-load_weights')
+    parser.add_argument('-create_valset', action='store_true')
+    parser.add_argument('-max_strlen', type=int, default=200)
+    parser.add_argument('-floyd', action='store_true')
+    parser.add_argument('-checkpoint', type=int, default=0)
 
-    parser.add_argument('-dropout', type=float, default=0.1)
+    opt = parser.parse_args()
+    
+    opt.device = 0 if opt.no_cuda is False else -1
+    if opt.device == 0:
+        assert torch.cuda.is_available()
+    
+    read_data(opt)
+    SRC, TRG = create_fields(opt)
+    opt.train = create_dataset(opt, SRC, TRG)
+    model = get_model(opt, len(SRC.vocab), len(TRG.vocab))
 
-    parser.add_argument('-log', default=None)
-    parser.add_argument('-save_model', default=None)
-    parser.add_argument('-save_mode', type=str, choices=['all', 'best'], default='best')
+    opt.optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr, betas=(0.9, 0.98), eps=1e-9)
+    if opt.SGDR == True:
+        opt.sched = CosineWithRestarts(opt.optimizer, T_max=opt.train_len)
 
-    parser.add_argument('-cuda', action='store_true')
-    parser.add_argument('-label_smoothing', action='store_true')
+    if opt.checkpoint > 0:
+        print("model weights will be saved every %d minutes and at end of epoch to directory weights/"%(opt.checkpoint))
+    
+    if opt.load_weights is not None and opt.floyd is not None:
+        os.mkdir('weights')
+        pickle.dump(SRC, open('weights/SRC.pkl', 'wb'))
+        pickle.dump(TRG, open('weights/TRG.pkl', 'wb'))
+    
+    train_model(model, opt)
 
-    parser.add_argument('-save_param', type=str, default="model/transformer_params")
+    if opt.floyd is False:
+        promptNextAction(model, opt, SRC, TRG)
 
-    options = parser.parse_args()
+def yesno(response):
+    while True:
+        if response != 'y' and response != 'n':
+            response = input('command not recognised, enter y or n : ')
+        else:
+            return response
 
-    # Set device type
-    device = torch.device("cuda" if options.cuda else "cpu")
+def promptNextAction(model, opt, SRC, TRG):
 
-    # Load preprocessed data
-    data = torch.load(options.data)
-    training_data, dev_data = prepare_dataloaders(data, options)
+    saved_once = 1 if opt.load_weights is not None or opt.checkpoint > 0 else 0
+    
+    if opt.load_weights is not None:
+        dst = opt.load_weights
+    if opt.checkpoint > 0:
+        dst = 'weights'
 
+    while True:
+        save = yesno(input('training complete, save results? [y/n] : '))
+        if save == 'y':
+            while True:
+                if saved_once != 0:
+                    res = yesno("save to same folder? [y/n] : ")
+                    if res == 'y':
+                        break
+                dst = input('enter folder name to create for weights (no spaces) : ')
+                if ' ' in dst or len(dst) < 1 or len(dst) > 30:
+                    dst = input("name must not contain spaces and be between 1 and 30 characters length, enter again : ")
+                else:
+                    try:
+                        os.mkdir(dst)
+                    except:
+                        res= yesno(input(dst + " already exists, use anyway? [y/n] : "))
+                        if res == 'n':
+                            continue
+                    break
+            
+            print("saving weights to " + dst + "/...")
+            torch.save(model.state_dict(), f'{dst}/model_weights')
+            if saved_once == 0:
+                pickle.dump(SRC, open(f'{dst}/SRC.pkl', 'wb'))
+                pickle.dump(TRG, open(f'{dst}/TRG.pkl', 'wb'))
+                saved_once = 1
+            
+            print("weights and field pickles saved to " + dst)
 
-    transformer = t.Transformer(
-        src_embedding = data["glove"]["src"],
-        tgt_embedding = data["glove"]["tgt"],
-        len_max_seq = data["options"].max_len,
-        d_k=options.d_k,
-        d_v=options.d_v,
-        d_model=options.d_model,
-        d_word_vec=options.d_word_vec,
-        d_inner=options.d_inner_hid,
-        n_layers=options.n_layers,
-        n_head=options.n_head,
-        dropout=options.dropout).to(device)
+        res = yesno(input("train for more epochs? [y/n] : "))
+        if res == 'y':
+            while True:
+                epochs = input("type number of epochs to train for : ")
+                try:
+                    epochs = int(epochs)
+                except:
+                    print("input not a number")
+                    continue
+                if epochs < 1:
+                    print("epochs must be at least 1")
+                    continue
+                else:
+                    break
+            opt.epochs = epochs
+            train_model(model, opt)
+        else:
+            print("exiting program...")
+            break
 
-    transformer_params = {
-        "src_embedding" : data["glove"]["src"],
-        "tgt_embedding" : data["glove"]["tgt"],
-        "len_max_seq" : data["options"].max_len,
-        "d_k" : options.d_k,
-        "d_v" : options.d_v,
-        "d_model" : options.d_model,
-        "d_word_vec" : options.d_word_vec,
-        "d_inner" : options.d_inner_hid,
-        "n_layers" :options.n_layers,
-        "n_head" : options.n_head,
-        "dropout" : options.dropout,
-        "tgt_idx2word": data["idx2word"]["tgt"],
-        "batch_size" : options.batch_size}
-
-    torch.save(transformer_params, options.save_param)
-
-    optimizer = ScheduledOptim(
-        optim.Adam(
-            filter(lambda x: x.requires_grad, transformer.parameters()),
-            betas=(0.9, 0.98), eps=1e-09),
-        options.d_model, options.n_warmup_steps)
-
-    train(transformer, training_data, dev_data, optimizer, device, options, data["idx2word"]["tgt"])
-
-
-def prepare_dataloaders(data, opt):
-    # ========= Preparing DataLoader =========#
-    train_loader = torch.utils.data.DataLoader(
-        td.TranslationDataset(
-            src_sentences=data['train']['src'],
-            tgt_sentences=data['train']['tgt']),
-        num_workers=2,
-        batch_size=opt.batch_size,
-        collate_fn=paired_collate_fn,
-        shuffle=True)
-
-    valid_loader = torch.utils.data.DataLoader(
-        td.TranslationDataset(
-            src_sentences=data['dev']['src'],
-            tgt_sentences=data['dev']['tgt']),
-        num_workers=2,
-        batch_size=opt.batch_size,
-        collate_fn=paired_collate_fn)
-
-    return train_loader, valid_loader
-
+    # for asking about further training use while true loop, and return
 if __name__ == "__main__":
     main()
