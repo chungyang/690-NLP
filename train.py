@@ -77,7 +77,7 @@ def main():
     parser.add_argument('-heads', type=int, default=8)
     parser.add_argument('-dropout', type=int, default=0.1)
     parser.add_argument('-batchsize', type=int, default=1500)
-    parser.add_argument('-printevery', type=int, default=100)
+    parser.add_argument('-printevery', type=int, default=1)
     parser.add_argument('-lr', type=int, default=0.0001)
     parser.add_argument('-load_weights')
     parser.add_argument('-create_valset', action='store_true')

@@ -1,13 +1,5 @@
-import argparse
-import time
 import torch
-from Models import get_model
 from Process import *
-import torch.nn.functional as F
-from Optim import CosineWithRestarts
-from Batch import create_masks
-import pdb
-import dill as pickle
 import argparse
 from Models import get_model
 from Beam import beam_search
@@ -23,6 +15,38 @@ def get_synonym(word, SRC):
                 return SRC.vocab.stoi[l.name()]
             
     return 0
+
+
+def capitalize(sentence):
+    """
+    Capitalize the first letter and letter after punctuations such as : and .
+
+    :param sentence: a sentence str
+    :return: capitalized sentence str
+    """
+    # First converted the sentence to a list so we can capitalize it based on words and not
+    # character
+    sentence = sentence.split(" ")
+    capitalize_this = False
+    capitalized_sentence = []
+
+    # Capitalize the first word no matter what
+    first_word = sentence[0].capitalize()
+    capitalized_sentence.append(first_word + " ")
+
+    for word in sentence[1:]:
+
+        if word == "i" or capitalize_this:
+            word = word.capitalize()
+            capitalize_this = False
+        elif word == "." or word == ":":
+            capitalize_this = True
+
+        capitalized_sentence.append(word)
+        capitalized_sentence.append(" ")
+    # strip the last white space
+    return "".join(capitalized_sentence[:-1])
+
 
 def multiple_replace(dict, text):
   # Create a regular expression  from the dictionary keys
@@ -46,15 +70,16 @@ def translate_sentence(sentence, model, opt, SRC, TRG):
         sentence = sentence.cuda()
     
     sentence = beam_search(sentence, model, SRC, TRG, opt)
+    sentence = capitalize(sentence)
 
-    return  multiple_replace({' ?' : '?',' !':'!',' .':'.','\' ':'\'',' ,':','}, sentence)
+    return  multiple_replace({' ?' : '?',' !':'!',' .':'.','\' ':'\'',' ,':',', " '":"'"}, sentence)
 
 def translate(sentences, opt, model, SRC, TRG):
 #     sentences = opt.text.lower().split('.')
     translated = []
 
     for sentence in sentences:
-        translated.append(translate_sentence(sentence, model, opt, SRC, TRG).capitalize())
+        translated.append(translate_sentence(sentence, model, opt, SRC, TRG))
 
     with open('pred.txt', 'w') as f:
         for item in translated:
@@ -77,6 +102,7 @@ def main():
     parser.add_argument('-dropout', type=int, default=0.1)
     parser.add_argument('-no_cuda', action='store_true')
     parser.add_argument('-floyd', action='store_true')
+    parser.add_argument('-dev_data', default='data/dev.de')
     
     opt = parser.parse_args()
 
@@ -87,7 +113,7 @@ def main():
 
     SRC, TRG = create_fields(opt)
     model = get_model(opt, len(SRC.vocab), len(TRG.vocab))
-    sentences = open('data/dev.de', encoding='utf-8').read().split('\n')
+    sentences = open(opt.dev_data, encoding='utf-8').read().split('\n')
     
     phrase = translate(sentences, opt, model, SRC, TRG)
     print('> ' + phrase + '\n')
