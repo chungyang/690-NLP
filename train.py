@@ -28,8 +28,8 @@ def train_model(model, opt):
                     
         for i, batch in enumerate(opt.train): 
 
-            src = batch.src.transpose(0,1)
-            trg = batch.trg.transpose(0,1)
+            src = batch.src.transpose(0,1).cuda()
+            trg = batch.trg.transpose(0,1).cuda()
             trg_input = trg[:, :-1]
             src_mask, trg_mask = create_masks(src, trg_input, opt)
             preds = model(src, trg_input, src_mask, trg_mask)
@@ -150,10 +150,10 @@ def promptNextAction(model, opt, SRC, TRG):
                     break
             
             print("saving weights to " + dst + "/...")
-            torch.save(model.state_dict(), f'{dst}/model_weights')
+            torch.save(model.state_dict(), dst + '/model_weights')
             if saved_once == 0:
-                pickle.dump(SRC, open(f'{dst}/SRC.pkl', 'wb'))
-                pickle.dump(TRG, open(f'{dst}/TRG.pkl', 'wb'))
+                pickle.dump(SRC, open(dst + '/SRC.pkl', 'wb'))
+                pickle.dump(TRG, open(dst + '/TRG.pkl', 'wb'))
                 saved_once = 1
             
             print("weights and field pickles saved to " + dst)
