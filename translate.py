@@ -96,7 +96,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-load_weights', required=True)
     parser.add_argument('-k', type=int, default=3)
-    parser.add_argument('-max_len', type=int, default=200)
+    parser.add_argument('-max_len', type=int, default=80)
     parser.add_argument('-d_model', type=int, default=512)
     parser.add_argument('-n_layers', type=int, default=6)
     parser.add_argument('-src_lang', required=True)
