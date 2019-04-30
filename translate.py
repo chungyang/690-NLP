@@ -4,6 +4,7 @@ import argparse
 from Models import get_model
 from Beam import beam_search
 from nltk.corpus import wordnet
+import nltk
 from torch.autograd import Variable
 import re
 
@@ -79,7 +80,9 @@ def translate(sentences, opt, model, SRC, TRG):
     translated = []
 
     for sentence in sentences:
-        translated.append(translate_sentence(sentence, model, opt, SRC, TRG))
+        trainslate_sentence = translate_sentence(sentence, model, opt, SRC, TRG)
+        print(sentence, " " , trainslate_sentence)
+        translated.append(trainslate_sentence)
 
     with open('pred.txt', 'w') as f:
         for item in translated:
@@ -93,7 +96,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-load_weights', required=True)
     parser.add_argument('-k', type=int, default=3)
-    parser.add_argument('-max_len', type=int, default=200)
+    parser.add_argument('-max_len', type=int, default=80)
     parser.add_argument('-d_model', type=int, default=512)
     parser.add_argument('-n_layers', type=int, default=6)
     parser.add_argument('-src_lang', required=True)
@@ -119,4 +122,5 @@ def main():
     print('> ' + phrase + '\n')
 
 if __name__ == '__main__':
+    nltk.download('wordnet')
     main()

@@ -21,7 +21,7 @@ def train_model(model, opt):
         total_loss = 0
         if opt.floyd is False:
             print("   %dm: epoch %d [%s]  %d%%  loss = %s" %\
-            ((time.time() - start)//60, epoch + 1, "".join(' '*20), 0, '...'), end='\r')
+            ((time.time() - start)//60, epoch + 1, "".join(' '*20), 0, '...'), end='\ r')
         
         if opt.checkpoint > 0:
             torch.save(model.state_dict(), 'weights/model_weights')
@@ -73,15 +73,15 @@ def main():
     parser.add_argument('-SGDR', action='store_true')
     parser.add_argument('-epochs', type=int, default=2)
     parser.add_argument('-d_model', type=int, default=512)
-    parser.add_argument('-n_layers', type=int, default=6)
-    parser.add_argument('-heads', type=int, default=8)
+    parser.add_argument('-n_layers', type=int, default=5)
+    parser.add_argument('-heads', type=int, default=2)
     parser.add_argument('-dropout', type=int, default=0.1)
     parser.add_argument('-batchsize', type=int, default=1500)
     parser.add_argument('-printevery', type=int, default=1)
     parser.add_argument('-lr', type=int, default=0.0001)
     parser.add_argument('-load_weights')
     parser.add_argument('-create_valset', action='store_true')
-    parser.add_argument('-max_strlen', type=int, default=200)
+    parser.add_argument('-max_strlen', type=int, default=80)
     parser.add_argument('-floyd', action='store_true')
     parser.add_argument('-checkpoint', type=int, default=0)
 
